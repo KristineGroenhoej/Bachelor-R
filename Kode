@@ -1,0 +1,692 @@
+##Indlæsning af data
+
+setwd("C:/Users/Bruger/Desktop/Bachelorprojekt/R")
+
+data <-read.csv("data.csv")
+
+head(data)
+nrow(data)
+ncol(data)
+tail(data)
+
+which(is.na(data))
+
+
+
+
+##Manipulation af data
+##We opt to store the data as xts objects because this type of object can be indexed by an indicator of time and date
+
+time_num <-data$time_num
+
+library(lubridate)
+timecharacter <- format(date_decimal(time_num), "%d-%m-%Y %H:%M:%S") #konverterer time_num til character
+
+head(timecharacter)
+tail(timecharacter)
+which(is.na(timecharacter))
+
+library(dplyr) 
+
+timestamp <- dmy_hms(timecharacter)   #Konverterer timecharacter til timestamp (date)
+which(is.na(timestamp)) 
+
+
+
+
+
+data$timestamp<-timestamp #adder timestamp til data
+
+data$time_num <- NULL #sletter time_num
+data$obs <-NULL #sletter obs
+
+
+library(xts)
+head(data)
+xts<-as.xts(data[,"SPY_price",drop=FALSE], order.by=data$timestamp)
+plot(xts)
+
+
+##Setup
+library(highfrequency)
+
+returndata<-makeReturns(xts)##*100
+
+
+summary(returndata)
+head(returndata)
+tail(returndata)
+
+
+##Plot
+par(mfrow=c(1,1))
+plot(returndata, main = NULL, xaxt = "none", ylim = c(-0.12,0.07))
+tt <- time(returndata)
+ix <- seq(1, length(tt), by=50) 
+fmt <- "%y-%b"
+labs <- format(tt[ix], fmt)
+axis(side = 1, at = tt[ix], labels = labs,  cex.axis = 1, lwd=0)
+##Plot slut
+
+
+library(moments)
+kurtosis(returndata)
+skewness(returndata)
+
+
+rd<-as.data.frame(returndata)
+
+
+
+
+
+RV<-rCov(returndata, cor = FALSE, align.by = NULL, align.period = NULL, makeReturns = FALSE )
+length(RV)
+head(RV)
+tail(RV)
+summary(RV)
+kurtosis(RV)
+skewness(RV)
+
+
+
+BV<-rBPCov(returndata, cor = FALSE, makeReturns = FALSE)
+head(BV)
+summary(BV)
+which(is.na(BV))
+BV2<-na.omit(BV)
+kurtosis(BV2)
+skewness(BV2)
+length(BV)
+##RV<-RV[-c(1226,3248)]
+length(RV)
+
+J<-RV-BV
+head(J)
+summary(J)
+kurtosis(J)
+skewness(J)
+length(J[which(abs(J[,1])>0.01),])
+
+
+plot(J, ylim = c(-0.0005,0.01))
+plot(BV, ylim = c(-0.0005,0.01))
+plot(RV, ylim = c(-0.0005,0.01))
+
+colnames(BV)[1] <-"rBPCov"
+head(BV)
+colnames(RV)[1] <-"rCov"
+head(RV)
+
+
+merge<-merge(RV, BV,
+             all = TRUE,
+             fill = NA,
+             suffixes = NULL,
+             join = "outer",
+             retside = TRUE,
+             retclass = "xts",
+             tzone = NULL,
+             drop=NULL,
+             check.names=NULL)
+
+
+
+
+head(merge)
+which(is.na(merge))
+which(is.na(merge$rBPCov))
+
+completerecords <- na.omit(merge)  
+head(completerecords)
+##Model-fitting
+
+##Implementing af HAR-RV model
+harRV = harModel(data=RV , periods = c(1,5,22), RVest = "rCov", type="HARRV",h=1,transform=NULL) #Se http://highfrequency.herokuapp.com/ 5.1.4 for forklaring af valgte variable
+
+class(harRV)
+harRV
+summary(harRV)
+plot(harRV)
+
+##Implementering af HAR-RV-J model
+HARVJ1<- harModel(completerecords, periods = c(1,5,22), periodsJ = c(1),
+                  RVest = c("rCov","rBPCov"),type = "HARRVJ", inputType = "RM")
+summary(HARVJ1)
+plot(HARVJ1)
+
+
+##Model-sammenligning
+
+##Long memory
+
+##RV
+acfRV<-acf(RV, lag.max = 252, type= 'correlation')
+Lag = round(acfRV$lag,2)
+ACF = round(acfRV$acf,2)
+ACFR<-data.frame(Lag, ACF)
+plot(ACFR)
+head(ACFR)
+ACFsumRV<-matrix(NA,nrow=252, ncol=1)
+
+
+for (i in 1:252){
+  ACFsumRV[i] <-sum(abs(ACFR$ACF[1:i]))
+}
+
+head(ACFsumRV)
+plot(ACFsumRV)
+
+##HAR-RV
+head(har3)
+acfhar<-acf(har3, lag.max = 252, type= 'correlation')
+Lag2 = round(acfhar$lag,2)
+ACF2 = round(acfhar$acf,2)
+ACFH<-data.frame(Lag2, ACF2)
+plot(ACFR)
+head(ACFR)
+ACFsumh<-matrix(NA,nrow=252, ncol=1)
+
+
+
+for (i in 1:252){
+  ACFsumh[i] <-sum(abs(ACFH$ACF[1:i]))
+}
+
+head(ACFsumh)
+plot(ACFsumh)
+
+##HAR-RV-J
+head(harJ)
+
+acfharJ<-acf(harJ, lag.max = 252, type= 'correlation')
+Lag3 = round(acfharJ$lag,2)
+ACF3 = round(acfharJ$acf,2)
+ACFJ<-data.frame(Lag3, ACF3)
+plot(ACFJ)
+head(ACFJ)
+ACFsumj<-matrix(NA,nrow=252, ncol=1)
+
+
+
+for (i in 1:252){
+  ACFsumj[i] <-sum(abs(ACFJ$ACF[1:i]))
+}
+
+plot(ACFsumj)
+head(ACFsumj)
+
+##
+head(c(ACFsumRV, ACFsumh, ACFsumj))
+
+df2 <- data.frame(x=rep(1:252, 3), sum=c(ACFsumRV, ACFsumh, ACFsumj), 
+                  Model=rep(c('RV', 'HARRV', 'HARRVJ'), each=252))
+
+head(df2)
+length(df2$val)
+
+ggplot(data = df2, aes(x=x, y=sum)) + geom_line(aes(colour=Model))
+
+
+
+plotacf1<-acf(HARRV, lag.max = 100, type= 'correlation')
+plotacf2<-acf(HARRVJ, lag.max = 100, type= 'correlation')
+plotacf3<-acf(RV, lag.max = 100, type= 'correlation')
+
+par(mfrow=c(1,3))
+
+
+plot(plotacf1, main='HAR-RV')
+plot(plotacf2, main='HAR-RV-J')
+plot(plotacf3, main='RV')
+
+                     
+################################################################
+
+library(plyr)
+RV2<-as.data.frame(RV)
+
+RV3<-RV2[-c(1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22),]
+har3<-fitted(harRV)
+har3<-as.data.frame((har3))
+head(har3)
+
+##harJlplp<-as.data.frame((HARVJ1[c("dates", "fitted.values")]))
+RV4<-completerecords$rCov
+head(RV4)
+RV4<-as.data.frame(RV4)
+RV4<-RV4[-c(1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22),]
+harJump<-fitted(HARVJ1)
+harJ<-as.data.frame(harJump)
+
+kurtosis(har3)
+skewness(har3)
+kurtosis(harJ)
+skewness(harJ)
+
+
+##MSE
+
+#HAR-RV
+##RMSE <- function(error) { sqrt(mean(error^2)) }
+##RMSE(harRV$residuals)
+
+head(har3)
+head(RV3)
+head(RV)
+tail(RV)
+plot(RV)
+
+h2<-(RV3-har3)^2
+plot(h2)
+h2<-as.data.frame(h2)
+colMeans(h2, na.rm = TRUE)
+summary(h2)
+
+h<-harRV$residuals^2
+h<-as.data.frame(h)
+plot(h)
+head(h)
+MSE1<-colMeans(h, na.rm = TRUE)
+max(h)
+MSE1 
+
+#HAR-RV-J
+MSE2<-mean(HARVJ1$residuals^2)
+MSE2
+SE<-HARVJ1$residuals^2
+mean(SE)
+summary(SE)
+##QLIKE
+
+##HAR-RV
+L<-RV3/har3-log(RV3/har3)-1 #
+
+L[L == Inf] <- NA
+colMeans(L, na.rm = TRUE)
+summary(L)
+
+
+##HAR-RV-J
+
+B<-RV4/harJ-log(RV4/harJ)-1 
+
+B[B == Inf] <- NA
+which(is.na(B)) ##Hvorfor får vi så mange na?
+colMeans(B, na.rm = TRUE)
+summary(B)
+
+which(is.na(RV3))
+
+
+
+
+library(car); ##bruges til linearHypothesis
+
+
+##til daglig for at kigge på korrelation
+d1 <- data.frame(Date= format(timestamp, '%d/%m/%Y'), Time=format(timestamp, '%H:%M:%S'))
+head(d1)
+d1$price<-data$SPY_price
+head(d1)
+
+d2<-d1
+d2$Time<-NULL
+d2$Date<-NULL
+d2$Date<-dmy(d1$Date)
+head(d2)
+d2<-as.xts(d2, order.by=d2$Date)
+d3<-makeReturns(d2)
+head(d3)
+d3$Date<-NULL
+head(d3)
+RVd3<-rCov(d3)
+colnames(RVd3)[1] <-"rCov"
+head(RVd3)
+
+RVda<-RVd3[-c(1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,1226,3248)]
+
+##head(d2)
+library(lubridate)
+##head(d1)
+d5<-d1[!duplicated(d1$Date, fromLast=TRUE),]
+head(d5)
+d4<-d5
+d4$Date<-NULL
+d4$Date<-dmy(d5$Date)
+d4$Time<-NULL
+head(d4)
+
+library(xts)
+d6<-as.xts(d4[, "price", drop=FALSE], order.by=d4$Date)
+library(highfrequency)
+dailyreturns<-makeReturns(d6)
+head(dailyreturns)
+d7<-dailyreturns[-c(1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22, 1226, 3248)]
+
+
+merge2<-merge(RVda, d7,
+              all = TRUE,
+              fill = NA,
+              suffixes = NULL,
+              join = "outer",
+              retside = TRUE,
+              retclass = "xts",
+              tzone = NULL,
+              drop=NULL,
+              check.names=NULL)
+
+##cbc<-cbind.xts(RVd3, dailyreturns)
+##head(cbc)
+
+head(merge2)
+
+length(RVda)
+length(fitted)
+length(d7)
+
+fitted<-fitted(harRV)
+fitted<-fitted[-c(1226, 3248)]
+head(merge2)
+merge3<-merge(merge2, fitted,
+              all = TRUE,
+              fill = NA,
+              suffixes = NULL,
+              join = "outer",
+              retside = TRUE,
+              retclass = "xts",
+              tzone = NULL,
+              drop=NULL,
+              check.names=NULL)
+
+head(merge3)
+
+fittedJ<-fitted(HARVJ1)
+length(fittedJ)
+
+merge4<-merge(merge3, fittedJ,
+              all = TRUE,
+              fill = NA,
+              suffixes = NULL,
+              join = "outer",
+              retside = TRUE,
+              retclass = "xts",
+              tzone = NULL,
+              drop=NULL,
+              check.names=NULL)
+
+cbcd4<-as.data.frame(merge4)
+
+cor(cbcd4, method="kendall", use="pairwise")
+
+cor(cbcd4, method="spearman", use="pairwise")
+
+cor(cbcd4, method="pearson", use="pairwise")
+
+Realiseret_varians<-as.numeric(RVda)
+daglige_logafkast<-as.numeric(d7)
+head(RVda)  
+ccf (Realiseret_varians, daglige_logafkast, lag = 22, correlation = TRUE, pl = TRUE)
+
+HAR<-as.numeric(fitted)
+HARJ<-as.numeric(fittedJ)
+rvdiff<-diff(Realiseret_varians, lag=1)
+dr<-daglige_logafkast[-c(1)]
+ccf (HAR, daglige_logafkast, lag = 22, correlation = TRUE, pl = TRUE)
+ccf (HARJ, daglige_logafkast, lag = 22, correlation = TRUE, pl = TRUE)
+##Har de negative afkast?
+ccf (dr, rvdiff, lag = 22, correlation = TRUE, pl = TRUE)
+
+
+
+
+twoord.plot2 = function (lx, rx, ldata, rdata, lcol, rcol, ltype, rtype, border, 
+                         rylab, lylab, xlab, ..., incrylim = NULL, halfwidth = 0.4, 
+                         leftfront = FALSE, mar = c(5, 4, 4, 4)) 
+{
+  ltype <- sapply(ltype, function(x) match.arg(x, c("p", 
+                                                    "l", "b", "c", "o", "bar")))
+  rtype <- sapply(rtype, function(x) match.arg(x, c("p", 
+                                                    "l", "b", "c", "o", "bar")))
+  incrylim <- ifelse(is.null(incrylim), 0, as.numeric(incrylim))
+  if (is.vector(ldata)) 
+    ldata <- as.matrix(ldata)
+  if (is.vector(rdata)) 
+    rdata <- as.matrix(rdata)
+  if (missing(border)) 
+    border <- "grey80"
+  if (missing(xlab)) 
+    xlab <- "x"
+  if (missing(rylab)) 
+    rylab <- "right y values"
+  if (missing(lylab)) 
+    lylab <- "left y values"
+  if (missing(lcol)) 
+    lcol <- palette()[1:NCOL(ldata)]
+  if (missing(rcol)) 
+    rcol <- palette()[1:NCOL(rdata)]
+  xlimits <- range(lx, rx)
+  oldmar <- par("mar")
+  par(mar = mar)
+  if (leftfront) {
+    twoord.stackplot(rx, lx, rdata, ldata, rcol, lcol, rtype, 
+                     ltype, border, lylab, rylab, xlab, ..., incrylim = NULL, 
+                     halfwidth = 0.4, leftfront = FALSE, mar = c(5, 4, 
+                                                                 4, 4))
+    return(invisible())
+  }
+  if (NCOL(ldata) > 1) {
+    lcol <- rep(lcol, length = NCOL(ldata))
+    ltype <- rep(ltype, length = NCOL(ldata))
+  }
+  if (any(ltype == "bar")) {
+    lylimits <- range(ifelse(ldata < 0, ldata, 0), rowSums(ldata))
+    lylimits[1] <- ifelse(lylimits[1] > 0, lylimits[1] * 
+                            (1 - incrylim), lylimits[1] * (1 + incrylim))
+    lylimits[2] <- ifelse(lylimits[2] > 0, lylimits[2] * 
+                            (1 + incrylim), lylimits[2] * (1 - incrylim))
+    plot(0, type = "n", axes = FALSE, xlim = xlimits, 
+         ylim = lylimits, ylab = "", xlab = xlab, ...)
+    xbottom <- par("usr")[1]
+    xylim <- par("usr")
+    ly <- ldata[, 1]
+    rect(lx - halfwidth, ifelse(ly < 0, ly, xbottom), lx + 
+           halfwidth, ifelse(ly > 0, ly, 0), col = lcol[1], 
+         border = border, ...)
+    if (NCOL(ldata) > 1) 
+      for (i in 2:NCOL(ldata)) {
+        ly <- ldata[, i]
+        rect(lx - halfwidth, ifelse(ly < 0, ly, xbottom) + 
+               ldata[, i - 1], lx + halfwidth, ifelse(ly > 
+                                                        0, ly, 0) + ldata[, i - 1], col = lcol[i], 
+             border = border, ...)
+      }
+  }
+  else {
+    lylimits <- range(ldata)
+    lylimits[1] <- ifelse(lylimits[1] > 0, lylimits[1] * 
+                            (1 - incrylim), lylimits[1] * (1 + incrylim))
+    lylimits[2] <- ifelse(lylimits[2] > 0, lylimits[2] * 
+                            (1 + incrylim), lylimits[2] * (1 - incrylim))
+    plot(lx, ldata[, 1], xlim = xlimits, ylim = lylimits, 
+         col = lcol[1], type = ltype[1], axes = FALSE, ylab = "", 
+         xlab = xlab, ...)
+    if (NCOL(ldata) > 1) 
+      for (i in 2:NCOL(ldata)) lines(lx, ldata[, i], col = lcol[i], 
+                                     type = ltype[i], ...)
+  }
+  xylim <- par("usr")
+  mtext(lylab, 2, 2, col = lcol[1])
+  # axis(1)
+  axat <- axis(2, col = lcol[1], labels = FALSE)
+  abline(v = xylim[1], col = lcol[1])
+  mtext(axat, 2, 1, at = axat, col = lcol[1])
+  box()
+  par(new = TRUE)
+  if (NCOL(rdata) > 1) {
+    rcol <- rep(rcol, length = NCOL(rdata))
+    rtype <- rep(rtype, length = NCOL(rdata))
+  }
+  if (any(rtype == "bar")) {
+    rylimits <- range(ifelse(rdata < 0, rdata, 0), rowSums(rdata))
+    rylimits[1] <- ifelse(rylimits[1] > 0, rylimits[1] * 
+                            (1 - incrylim), rylimits[1] * (1 + incrylim))
+    rylimits[2] <- ifelse(rylimits[2] > 0, rylimits[2] * 
+                            (1 + incrylim), rylimits[2] * (1 - incrylim))
+    ry <- rdata[, 1]
+    plot(0, type = "n", axes = FALSE, xlim = xlimits, 
+         ylim = rylimits, ylab = "", xlab = "", 
+         ...)
+    xbottom <- par("usr")[1]
+    xylim <- par("usr")
+    rect(rx - halfwidth, ifelse(ry < 0, ry, xbottom), rx + 
+           halfwidth, ifelse(ry > 0, ry, 0), col = rcol[1], 
+         border = border, ...)
+    if (NCOL(rdata) > 1) 
+      for (i in 2:NCOL(rdata)) {
+        ry <- rdata[, i]
+        rect(rx - halfwidth, ifelse(ry < 0, ry, xbottom) + 
+               rdata[, i - 1], rx + halfwidth, ifelse(ry > 
+                                                        0, ry, 0) + rdata[, i - 1], col = rcol[i], 
+             border = border, ...)
+      }
+  }
+  else {
+    rylimits <- range(rdata)
+    rylimits[1] <- ifelse(rylimits[1] > 0, rylimits[1] * 
+                            (1 - incrylim), rylimits[1] * (1 + incrylim))
+    rylimits[2] <- ifelse(rylimits[2] > 0, rylimits[2] * 
+                            (1 + incrylim), rylimits[2] * (1 - incrylim))
+    plot(rx, rdata[, 1], xlim = xlimits, ylim = rylimits, 
+         col = rcol[1], type = rtype[1], axes = FALSE, ylab = "", 
+         xlab = "", ...)
+    if (NCOL(rdata) > 1) 
+      for (i in 2:NCOL(rdata)) lines(rx, rdata[, i], col = rcol[i], 
+                                     type = rtype[i], ...)
+  }
+  axat <- axis(4, col = rcol[1], labels = FALSE)
+  abline(v = xylim[1], col = rcol[1])
+  mtext(axat, 4, 1, at = axat, col = rcol[1])
+  mtext(rylab, 4, 2, col = rcol[1])
+  par(mar = oldmar)
+}
+
+
+
+twoord.plot2(lx=d8$time, ldata=d8$returns, rx=d8$time, rdata=d8$price, lcol='red', rcol='blue', rylab='Pris', lylab='Afkast', ltype ='l', rtype ='l', xlab="Dato"
+)
+tt <- d8$time
+ix <- seq(1, length(tt), by=50) 
+fmt <- "%y-%b"
+labs <- format(tt[ix], fmt)
+axis(side = 1, at = tt[ix], labels = labs,  cex.axis = 1, lwd=0)
+
+
+
+
+
+##Vis ikke normalfordelt
+
+head(rd)
+
+
+d8<-as.data.frame(d7)
+head(har3)
+is.data.frame(har3)
+is.data.frame(harJ)
+is.data.frame(RV2)
+
+par(mfrow=c(2,2))
+qqnorm(rd$SPY_price, ylab='5min afkast', main=NULL); qqline(rd$SPY_price, col = "steelblue", lwd = 2)
+
+qqnorm(RV2$rCov, ylab='Realiseret varians', main=NULL); qqline(RV2$rCov, col = "steelblue", lwd = 2)
+
+qqnorm(har3$`(har3)`, ylab='HAR-RV', main=NULL); qqline(har3$`(har3)`, col = "steelblue", lwd = 2)
+
+qqnorm(harJ$harJump, ylab='HAR-RV-J', main=NULL); qqline(harJ$harJump, col = "steelblue", lwd = 2)
+
+       
+#qqnorm(rw,xlab='Normal quantile', ylab='Quantile of weekly returns', col="brown") 
+#qqline(rw, col="blue")        
+
+
+
+##Out-of-sample sammenligning
+
+##HAR-RV
+
+RV4479<-tail(RV, n=4479)
+head(RV100)
+
+tail(RVf)
+
+head(RVfcomp)
+tail(RVfcomp)
+
+length(RV)
+
+library(HARModel)
+
+hfo<-HARForecast(RV, BPV= NULL, RQ = NULL , periods = c(1,5,22), 
+            periodsJ = NULL, periodsRQ = NULL, nRoll=4479 , nAhead=264 , type = "HAR",
+            windowType = "rolling", insanityFilter = TRUE, h = 1)
+
+plot(hfo)
+mean(forecastRes(hfo)^2)
+mean(qlike(hfo))
+
+length(forecastRes(hfo))
+summary(forecastRes(hfo)^2)
+
+forc<-getForc(hfo)
+
+
+length(forc)
+length(RV100)
+head(RV100)
+MZ<-lm(RV4479~forc)
+
+summary(MZ)
+linearHypothesis(MZ, c("(Intercept) = 0", "forc = 1"))
+
+B<-RV4479/forc-log(RV4479/forc)-1 ##De skal ikke være i anden? Altså vi har var
+
+B[B == Inf] <- NA
+which(is.na(B)) ##Hvorfor får vi så mange na?
+colMeans(B, na.rm = TRUE)
+summary(B)
+
+plot(forecastRes(hfo))
+
+
+##HAR-RV-J
+
+length(BV)
+length(completerecords$RV)
+head(completerecords)
+
+hfoJ<-HARForecast(completerecords$rCov, completerecords$rBPCov, RQ = NULL , periods = c(1,5,22), 
+                 periodsJ = c(1), periodsRQ = NULL, nRoll=4479 , nAhead=264 , type = "HARJ",
+                 windowType = "rolling", insanityFilter = TRUE, h = 1)
+
+plot(hfoJ)
+mean(forecastRes(hfoJ)^2)
+summary(forecastRes(hfoJ)^2)
+
+
+forc2<-getForc(hfoJ)
+
+MZJ<-lm(RV4479~forc2)
+
+summary(MZJ)
+library(car)
+linearHypothesis(MZJ, c("(Intercept) = 0", "forc2 = 1"))
+
+
+B2<-RV4479/forc2-log(RV4479/forc2)-1
+
+B2[B2 == Inf] <- NA
+which(is.na(B2)) ##Hvorfor får vi så mange na?
+colMeans(B2, na.rm = TRUE)
+summary(B2)
+
